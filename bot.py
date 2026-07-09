@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 import ta
 from flask import Flask, request
-from threading import Thread
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -21,13 +20,16 @@ application = None
 def home():
     return "Bot is running perfectly!"
 
-# ٹیلی گرام سے میسجز وصول کرنے کا روٹ
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global application
     if application:
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        # اسینکرونس طریقے سے میسج پروسیس کرنا
-        asyncio.run_coroutine_threadsafe(application.update_queue.put(update), application.loop)
+        try:
+            # ٹیلی گرام کے نئے اپڈیٹ کو کیو (Queue) میں ڈالنا بغیر کسی تھریڈ ایشو کے
+            update = Update.de_json(request.get_json(force=True), application.bot)
+            application.update_queue.put_nowait(update)
+        except Exception as e:
+            print(f"Webhook processing error: {e}")
     return 'ok'
 
 # یوزر کی ترجیحات
@@ -111,31 +113,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_scanning = False
         await update.message.reply_text("اسکیننگ روک دی گئی ہے۔ دوبارہ شروع کرنے کے لیے /start لکھیں۔")
 
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
+# رینڈر پر سرور اور بوٹ کو ایک ساتھ چلانے کا ماسٹر فنکشن
 def main():
     global application
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+    
+    # بغیر پولنگ کے سادہ ایپلیکیشن بنانا
     application = Application.builder().token(BOT_TOKEN).build()
-    application.loop = loop
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", handle_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # بوٹ بیک اینڈ پر اسٹارت کرنا
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.start())
+    # رینڈر کے لیے پورٹ سیٹ اپ
+    port = int(os.environ.get("PORT", 8080))
     
-    # فلاسک سرور کو الگ دھریڈ میں چلانا
-    Thread(target=run_server).start()
+    print("Starting Webhook via built-in application handler...")
     
-    # لوپ کو لائیو رکھنا
-    loop.run_forever()
+    # یہ فنکشن ویب سرور بھی چلائے گا اور پرانے کریش والے لوپ کو بھی ختم کر دے گا
+    application.run_webhook(
+        listen='0.0.0.0',
+        port=port,
+        url_path='webhook',
+        webhook_url='https://trading-bot-ntft.onrender.com/webhook'
+    )
 
 if __name__ == '__main__':
     main()
