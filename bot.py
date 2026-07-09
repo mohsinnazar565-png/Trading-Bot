@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import ta
 from flask import Flask, request
+from threading import Thread
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -12,25 +13,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"
 CHAT_ID = "7548033382"
 
-# فلاسک ویب سرور سیٹ اپ
 app = Flask('')
-application = None
 
 @app.route('/')
 def home():
-    return "Bot is running perfectly!"
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    global application
-    if application:
-        try:
-            # ٹیلی گرام کے نئے اپڈیٹ کو کیو (Queue) میں ڈالنا بغیر کسی تھریڈ ایشو کے
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            application.update_queue.put_nowait(update)
-        except Exception as e:
-            print(f"Webhook processing error: {e}")
-    return 'ok'
+    return "Bot is alive and running!"
 
 # یوزر کی ترجیحات
 user_ema = 50
@@ -41,10 +28,8 @@ def get_usdt_pairs():
     try:
         url = "https://api.binance.com/api/v3/exchangeInfo"
         response = requests.get(url).json()
-        pairs = [symbols['symbol'] for symbols in response['symbols'] if symbols['symbol'].endswith('USDT') and symbols['status'] == 'TRADING']
-        return pairs[:50]
-    except Exception as e:
-        print(f"Error fetching pairs: {e}")
+        return [s['symbol'] for s in response['symbols'] if s['symbol'].endswith('USDT') and s['status'] == 'TRADING'][:50]
+    except Exception:
         return []
 
 def check_crossover(symbol, timeframe, ema_period):
@@ -56,11 +41,7 @@ def check_crossover(symbol, timeframe, ema_period):
         df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
         df['close'] = df['close'].astype(float)
         df['ema'] = ta.trend.ema_indicator(df['close'], window=int(ema_period))
-        prev_close = df['close'].iloc[-3]
-        prev_ema = df['ema'].iloc[-3]
-        current_close = df['close'].iloc[-2]
-        current_ema = df['ema'].iloc[-2]
-        if prev_close < prev_ema and current_close > current_ema:
+        if df['close'].iloc[-3] < df['ema'].iloc[-3] and df['close'].iloc[-2] > df['ema'].iloc[-2]:
             return True
     except Exception:
         pass
@@ -69,73 +50,50 @@ def check_crossover(symbol, timeframe, ema_period):
 async def start_scanning(bot):
     global is_scanning, user_ema, user_timeframe
     pairs = get_usdt_pairs()
-    await bot.send_message(chat_id=CHAT_ID, text=f"🔍 اسکیننگ شروع ہو گئی ہے...\nEMA: {user_ema}\nٹائم فریم: {user_timeframe}\nکل کوائنز: {len(pairs)}")
+    await bot.send_message(chat_id=CHAT_ID, text=f"🔍 اسکیننگ شروع ہو گئی ہے...\nEMA: {user_ema}\nٹائم فریم: {user_timeframe}")
     
     while is_scanning:
         for symbol in pairs:
             if not is_scanning:
                 break
             if check_crossover(symbol, user_timeframe, user_ema):
-                message = f"🚀 **EMA CROSSOVER SIGNAL!** 🚀\n\nCoin: #{symbol}\nTimeframe: {user_timeframe}\nEMA: {user_ema}\n\nقیمت نے ای ایم اے کو نیچے سے اوپر کراس کر لیا ہے (Spot Buy)۔"
-                await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
+                await bot.send_message(chat_id=CHAT_ID, text=f"🚀 **EMA CROSSOVER!** 🚀\n\nCoin: #{symbol}\nEMA: {user_ema}", parse_mode="Markdown")
             await asyncio.sleep(1)
         if is_scanning:
             await asyncio.sleep(300)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_keyboard = [['20', '50', '200']]
-    await update.message.reply_text(
-        "سلام! کرپٹو اسپاٹ ٹریڈنگ بوٹ میں خوش آمدید۔\n\nسب سے پہلے نیچے دیے گئے آپشنز میں سے اپنا **EMA** منتخب کریں:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
+    await update.message.reply_text("کرپٹو بوٹ میں خوش آمدید۔ اپنا **EMA** منتخب کریں:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_ema, user_timeframe, is_scanning
     text = update.message.text
-
     if text in ['20', '50', '200']:
         user_ema = int(text)
-        reply_keyboard = [['1h', '4h', '1d']]
-        await update.message.reply_text(
-            f"آپ نے {user_ema} EMA منتخب کیا ہے۔\n\nاب اپنا پسندیدہ **ٹائم فریم (Timeframe)** منتخب کریں:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
+        await update.message.reply_text(f"آپ نے {user_ema} EMA منتخب کیا۔ اب **Timeframe** منتخب کریں:", reply_markup=ReplyKeyboardMarkup([['1h', '4h', '1d']], one_time_keyboard=True, resize_keyboard=True))
     elif text in ['1h', '4h', '1d']:
         user_timeframe = text
-        if not is_scanning:
-            is_scanning = True
-            await update.message.reply_text(
-                f"سیٹنگز محفوظ ہو گئی ہیں!\n\nEMA: {user_ema}\nTimeframe: {user_timeframe}\n\nبوٹ اب اسکیننگ شروع کر رہا ہے...",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            asyncio.create_task(start_scanning(context.bot))
-    elif text == '/stop':
-        is_scanning = False
-        await update.message.reply_text("اسکیننگ روک دی گئی ہے۔ دوبارہ شروع کرنے کے لیے /start لکھیں۔")
+        is_scanning = True
+        await update.message.reply_text("بوٹ اب اسکیننگ شروع کر رہا ہے...", reply_markup=ReplyKeyboardRemove())
+        asyncio.create_task(start_scanning(context.bot))
 
-# رینڈر پر سرور اور بوٹ کو ایک ساتھ چلانے کا ماسٹر فنکشن
-def main():
-    global application
-    
-    # بغیر پولنگ کے سادہ ایپلیکیشن بنانا
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stop", handle_message))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # رینڈر کے لیے پورٹ سیٹ اپ
+def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    
-    print("Starting Webhook via built-in application handler...")
-    
-    # یہ فنکشن ویب سرور بھی چلائے گا اور پرانے کریش والے لوپ کو بھی ختم کر دے گا
-    application.run_webhook(
-        listen='0.0.0.0',
-        port=port,
-        url_path='webhook',
-        webhook_url='https://trading-bot-ntft.onrender.com/webhook'
-    )
+    app.run(host='0.0.0.0', port=port)
+
+# پولنگ موڈ جو گنی کورن کے ساتھ بیک گراؤنڈ میں چلے گا
+def run_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.run_polling(close_loop=False)
+
+# رینڈر کے لیے مین انٹری پوائنٹ
+Thread(target=run_bot).start()
 
 if __name__ == '__main__':
-    main()
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
