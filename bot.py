@@ -9,7 +9,7 @@ from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # --- کنفیگریشن ---
-BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"  # آپ کا ٹوکن اب بالکل صحیح فارمیٹ میں ہے
+BOT_TOKEN = "bot8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"  # آپ کا ٹوکن اب بالکل صحیح فارمیٹ میں ہے
 CHAT_ID = 7548033382                                       # آپ کی چیٹ آئی ڈی
 
 # رینڈر (Render) کے لیے ویب سرور سیٹ اپ تاکہ بوٹ بند نہ ہو
