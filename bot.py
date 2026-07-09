@@ -1,28 +1,38 @@
 import os
+import asyncio
 import time
 import requests
 import pandas as pd
 import ta
-import asyncio
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # --- کنفیگریشن ---
-BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"  # یہاں صرف ٹوکن آئے گا، لائبریری 'bot' خود لگا لیتی ہے
-CHAT_ID = "7548033382"                                       # آپ کی چیٹ آئی ڈی
+BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"
+CHAT_ID = "7548033382"
+RENDER_URL = "https://trading-bot-1-r1kp.onrender.com"  # آپ کا رینڈر یو آر ایل
 
-# رینڈر (Render) کے لیے ویب سرور سیٹ اپ
+# فلاسک ویب سرور سیٹ اپ
 app = Flask('')
+
+# ٹیلی گرام کے بوٹ کی ایپلیکیشن (گلوبل رکھیں گے تاکہ فلاسک اس تک پہنچ سکے)
+application = None
 
 @app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is running perfectly!"
 
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+# ٹیلی گرام کے میسجز وصول کرنے کے لیے ویب ہک روٹ
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    if application:
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        # پس منظر میں ٹاسک چلانے کے لیے asyncio لوپ کا استعمال
+        loop = asyncio.get_event_loop()
+        loop.create_task(application.process_update(update))
+    return 'ok'
 
 # یوزر کی ترجیحات
 user_ema = 50
@@ -34,7 +44,7 @@ def get_usdt_pairs():
         url = "https://api.binance.com/api/v3/exchangeInfo"
         response = requests.get(url).json()
         pairs = [symbols['symbol'] for symbols in response['symbols'] if symbols['symbol'].endswith('USDT') and symbols['status'] == 'TRADING']
-        return pairs[:50]  # رینڈر کے فری اکاؤنٹ پر لوڈ کم رکھنے کے لیے ٹاپ 50 پیئرز (بہترین پرفارمنس کے لیے)
+        return pairs[:50]
     except Exception as e:
         print(f"Error fetching pairs: {e}")
         return []
@@ -43,28 +53,21 @@ def check_crossover(symbol, timeframe, ema_period):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={ema_period + 5}"
         data = requests.get(url).json()
-        
         if not data or len(data) < (ema_period + 2):
             return False
-            
         df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
         df['close'] = df['close'].astype(float)
-        
         df['ema'] = ta.trend.ema_indicator(df['close'], window=int(ema_period))
-        
         prev_close = df['close'].iloc[-3]
         prev_ema = df['ema'].iloc[-3]
-        
         current_close = df['close'].iloc[-2]
         current_ema = df['ema'].iloc[-2]
-        
         if prev_close < prev_ema and current_close > current_ema:
             return True
     except Exception:
         pass
     return False
 
-# اسکیننگ کا نیا اور محفوظ طریقہ جو بوٹ کو کریش نہیں ہونے دے گا
 async def start_scanning(bot):
     global is_scanning, user_ema, user_timeframe
     pairs = get_usdt_pairs()
@@ -77,9 +80,7 @@ async def start_scanning(bot):
             if check_crossover(symbol, user_timeframe, user_ema):
                 message = f"🚀 **EMA CROSSOVER SIGNAL!** 🚀\n\nCoin: #{symbol}\nTimeframe: {user_timeframe}\nEMA: {user_ema}\n\nقیمت نے ای ایم اے کو نیچے سے اوپر کراس کر لیا ہے (Spot Buy)۔"
                 await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
-            await asyncio.sleep(1)  # رینڈر پر لوڈ اور بائنانس بلاکنگ سے بچنے کے لیے محفوظ وقفہ
-        
-        # ایک چکر پورا ہونے کے بعد 5 منٹ کا آرام تاکہ سرور ہینگ نہ ہو
+            await asyncio.sleep(1)
         if is_scanning:
             await asyncio.sleep(300)
 
@@ -109,16 +110,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"سیٹنگز محفوظ ہو گئی ہیں!\n\nEMA: {user_ema}\nTimeframe: {user_timeframe}\n\nبوٹ اب اسکیننگ شروع کر رہا ہے...",
                 reply_markup=ReplyKeyboardRemove()
             )
-            # پس منظر میں اسکیننگ شروع کرنے کے لیے اسینکرونس ٹاسک بنائیں
             asyncio.create_task(start_scanning(context.bot))
     elif text == '/stop':
         is_scanning = False
         await update.message.reply_text("اسکیننگ روک دی گئی ہے۔ دوبارہ شروع کرنے کے لیے /start لکھیں۔")
 
-def main():
-    # ویب سرور کو الگ تھریڈ میں چلائیں
-    Thread(target=run_server).start()
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
+def main():
+    global application
     # ٹیلی گرام بوٹ سیٹ اپ
     application = Application.builder().token(BOT_TOKEN).build()
     
@@ -126,8 +128,15 @@ def main():
     application.add_handler(CommandHandler("stop", handle_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("Bot is starting...")
-    application.run_polling()
+    # بوٹ کو انیشلائز کریں (پولنگ کے بغیر)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}"))
+    loop.run_until_complete(application.start())
+
+    print("Webhook Set & Bot Started! Running Flask Server...")
+    run_server()
 
 if __name__ == '__main__':
     main()
