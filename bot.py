@@ -12,26 +12,22 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 # --- کنفیگریشن ---
 BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"
 CHAT_ID = "7548033382"
-RENDER_URL = "https://trading-bot-1-r1kp.onrender.com"  # آپ کا رینڈر یو آر ایل
 
 # فلاسک ویب سرور سیٹ اپ
 app = Flask('')
-
-# ٹیلی گرام کے بوٹ کی ایپلیکیشن (گلوبل رکھیں گے تاکہ فلاسک اس تک پہنچ سکے)
 application = None
 
 @app.route('/')
 def home():
     return "Bot is running perfectly!"
 
-# ٹیلی گرام کے میسجز وصول کرنے کے لیے ویب ہک روٹ
-@app.route('/' + BOT_TOKEN, methods=['POST'])
+# ٹیلی گرام سے میسجز وصول کرنے کا روٹ
+@app.route('/webhook', methods=['POST'])
 def webhook():
     if application:
         update = Update.de_json(request.get_json(force=True), application.bot)
-        # پس منظر میں ٹاسک چلانے کے لیے asyncio لوپ کا استعمال
-        loop = asyncio.get_event_loop()
-        loop.create_task(application.process_update(update))
+        # اسینکرونس طریقے سے میسج پروسیس کرنا
+        asyncio.run_coroutine_threadsafe(application.update_queue.put(update), application.loop)
     return 'ok'
 
 # یوزر کی ترجیحات
@@ -121,22 +117,25 @@ def run_server():
 
 def main():
     global application
-    # ٹیلی گرام بوٹ سیٹ اپ
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     application = Application.builder().token(BOT_TOKEN).build()
+    application.loop = loop
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", handle_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # بوٹ کو انیشلائز کریں (پولنگ کے بغیر)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # بوٹ بیک اینڈ پر اسٹارت کرنا
     loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}"))
     loop.run_until_complete(application.start())
-
-    print("Webhook Set & Bot Started! Running Flask Server...")
-    run_server()
+    
+    # فلاسک سرور کو الگ دھریڈ میں چلانا
+    Thread(target=run_server).start()
+    
+    # لوپ کو لائیو رکھنا
+    loop.run_forever()
 
 if __name__ == '__main__':
     main()
