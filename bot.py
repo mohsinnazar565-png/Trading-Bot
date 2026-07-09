@@ -1,23 +1,14 @@
 import os
 import asyncio
-import time
 import requests
 import pandas as pd
 import ta
-from flask import Flask, request
-from threading import Thread
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # --- کنفیگریشن ---
 BOT_TOKEN = "8693213483:AAGd0ueLdox6tBDG9mbAr2HnaSgJLdFWh_4"
 CHAT_ID = "7548033382"
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is alive and running!"
 
 # یوزر کی ترجیحات
 user_ema = 50
@@ -78,22 +69,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("بوٹ اب اسکیننگ شروع کر رہا ہے...", reply_markup=ReplyKeyboardRemove())
         asyncio.create_task(start_scanning(context.bot))
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-# پولنگ موڈ جو گنی کورن کے ساتھ بیک گراؤنڈ میں چلے گا
-def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+def main():
+    # ایپلیکیشن بلڈ کریں
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # ہینڈلرز شامل کریں
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.run_polling(close_loop=False)
-
-# رینڈر کے لیے مین انٹری پوائنٹ
-Thread(target=run_bot).start()
+    
+    # رینڈر کی پورٹ حاصل کریں
+    port = int(os.environ.get("PORT", 8080))
+    
+    # یہ آفیشل فنکشن سرور بھی چلائے گا اور ویب ہک بھی خود سیٹ کرے گا
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://trading-bot-1-hs5g.onrender.com/{BOT_TOKEN}"
+    )
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    main()
