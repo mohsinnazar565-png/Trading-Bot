@@ -1,6 +1,8 @@
-python-telegram-bot==20.8
-requests
-pandas
-ta
-Flask
-gunicorn
+python-telegram-bot==21.4
+ccxt==4.3.87
+pandas==2.2.2
+aiohttp==3.9.5
+Flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+numpy==1.26.4
